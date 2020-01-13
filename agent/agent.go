@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"fmt"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -42,19 +44,17 @@ func panicRecover(plugin *plugin.RunningPlugin) {
 // reporting interval.
 func (a *Agent) collect(
 	shutdown chan struct{},
-	plugin *plugin.RunningPlugin,
+	rp *plugin.RunningPlugin,
 	interval time.Duration,
 	metricC chan metric.Metric,
 ) error {
-	defer panicRecover(plugin)
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	agg := NewAggregator(metricC, a.conf)
 
 	for {
-		collectWithTimeout(shutdown, plugin, agg, interval)
+		collectWithTimeout(shutdown, rp, agg, interval)
 
 		select {
 		case <-shutdown:
@@ -72,41 +72,103 @@ func (a *Agent) collect(
 //   over.
 func collectWithTimeout(
 	shutdown chan struct{},
-	plugin *plugin.RunningPlugin,
+	rp *plugin.RunningPlugin,
 	agg metric.Aggregator,
 	timeout time.Duration,
 ) {
 	ticker := time.NewTicker(timeout)
 	defer ticker.Stop()
 	done := make(chan error)
-	go func() {
-		for _, instance := range plugin.Config.Instances {
-			done <- plugin.Plugin.Check(agg, instance)
-			agg.Flush()
-		}
-	}()
 
-	for {
+	var wg sync.WaitGroup
+	for i, plug := range rp.Plugins {
+		wg.Add(1)
+		go func() {
+			defer panicRecover(rp)
+			defer wg.Done()
+
+			done <- plug.Check(agg)
+			agg.Flush()
+		}()
+
 		select {
 		case err := <-done:
 			if err != nil {
-				log.Infof("ERROR in plugin [%s]: %s", plugin.Name, err)
+				log.Errorf("ERROR to check plugin instance [%s#%d]: %s", rp.Name, i, err)
 			}
-			return
 		case <-ticker.C:
-			log.Infof("ERROR: plugin [%s] took longer to collect than "+
+			log.Infof("ERROR: plugin instance [%s#%d] took longer to collect than "+
 				"collection interval (%s)",
-				plugin.Name, timeout)
-			continue
+				rp.Name, i, timeout)
 		case <-shutdown:
 			return
 		}
 	}
+
+	wg.Wait()
 }
 
 // Test verifies that we can 'collect' from all Plugins with their configured
 // Config struct
 func (a *Agent) Test() error {
+	shutdown := make(chan struct{})
+	metricC := make(chan metric.Metric)
+	var metrics []string
+	var checkRate bool
+
+	// dummy receiver for the metric channel
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		for {
+			select {
+			case m := <-metricC:
+				if checkRate {
+					metrics = append(metrics, m.String())
+				}
+			case <-shutdown:
+				return
+			}
+		}
+	}()
+
+	agg := NewAggregator(metricC, a.conf)
+	for _, rp := range a.conf.Plugins {
+		fmt.Println("------------------------------------")
+		for i, plug := range rp.Plugins {
+			fmt.Printf("* Plugin: %s\n", rp.Name)
+			if err := plug.Check(agg); err != nil {
+				return err
+			}
+			agg.Flush()
+
+			// Wait a second for collecting rate metrics.
+			time.Sleep(time.Second)
+			fmt.Println("* Running 2nd iteration to capture rate metrics")
+			if err := plug.Check(agg); err != nil {
+				return err
+			}
+			checkRate = true
+			agg.Flush()
+
+			// Waiting for the metrics filled up
+			time.Sleep(time.Millisecond)
+
+			fmt.Printf("* Instance #%d, Collected %d metrics\n", i, len(metrics))
+			sort.Strings(metrics)
+			for _, m := range metrics {
+				fmt.Println("> " + m)
+			}
+			metrics = []string{}
+		}
+	}
+
+	close(shutdown)
+	wg.Wait()
+
+	fmt.Println("Done!")
 	return nil
 }
 

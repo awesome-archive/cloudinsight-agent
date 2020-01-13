@@ -66,7 +66,7 @@ type DiskIOStats struct {
 }
 
 // Check XXX
-func (s *Stats) Check(agg metric.Aggregator, instance plugin.Instance) error {
+func (s *Stats) Check(agg metric.Aggregator) error {
 	if err := s.collectSystemMetrics(agg); err != nil {
 		return err
 	}
@@ -293,6 +293,10 @@ func (s *Stats) collectDiskIOMetrics(agg metric.Aggregator) error {
 		// Compute ioawait
 		lastStats := s.io.lastIOStats[name]
 		timeDelta := time.Now().Unix() - s.io.lastCollectionTime
+		if timeDelta == 0 {
+			continue
+		}
+
 		ioReadTimeDelta := float64(io.ReadTime-lastStats.ReadTime) / float64(timeDelta)
 		ioWriteTimeDelta := float64(io.WriteTime-lastStats.WriteTime) / float64(timeDelta)
 		ioReadCountDelta := float64(io.ReadCount-lastStats.ReadCount) / float64(timeDelta)
@@ -304,7 +308,8 @@ func (s *Stats) collectDiskIOMetrics(agg metric.Aggregator) error {
 		} else if ioWriteCountDelta == 0 {
 			ioawait = ioReadTimeDelta
 		} else {
-			ioawait = float64(ioReadTimeDelta*ioReadCountDelta+ioWriteTimeDelta*ioWriteCountDelta) / float64(ioReadCountDelta+ioWriteCountDelta)
+			ioawait = float64(ioReadTimeDelta*ioReadCountDelta+
+				ioWriteTimeDelta*ioWriteCountDelta) / float64(ioReadCountDelta+ioWriteCountDelta)
 		}
 
 		agg.Add("gauge", metric.NewMetric("system.io.await", ioawait))

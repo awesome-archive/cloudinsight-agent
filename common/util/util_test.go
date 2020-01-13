@@ -1,6 +1,10 @@
 package util
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestCast(t *testing.T) {
 	for _, c := range []struct {
@@ -32,7 +36,7 @@ func TestRound(t *testing.T) {
 	} {
 		out := Round(c.in1, c.in2)
 		if out != c.want {
-			t.Errorf("Cast(%f, %d) == %f, want %f", c.in1, c.in2, out, c.want)
+			t.Errorf("Round(%f, %d) == %f, want %f", c.in1, c.in2, out, c.want)
 		}
 	}
 }
@@ -81,7 +85,82 @@ func TestHash(t *testing.T) {
 	} {
 		out := Hash(c.in)
 		if out != c.want {
-			t.Errorf("Cast(%s) == %d, want %d", c.in, out, c.want)
+			t.Errorf("Hash(%s) == %d, want %d", c.in, out, c.want)
+		}
+	}
+}
+
+type MyStruct struct {
+	StatusURL string `yaml:"status_url"`
+	User      string
+	password  string
+	Tags      []string
+	Timeout   int64
+	Options   options
+}
+
+type options struct {
+	Replication   bool
+	GaleraCluster bool `yaml:"galera_cluster"`
+}
+
+func TestFillStruct(t *testing.T) {
+	myData := make(map[string]interface{})
+	myData["status_url"] = "http://localhost"
+	myData["user"] = "admin"
+	myData["password"] = "admin"
+	myData["tags"] = []interface{}{"test"}
+
+	result := &MyStruct{}
+	err := FillStruct(myData, result)
+	assert.NoError(t, err)
+	assert.Equal(t, "http://localhost", result.StatusURL)
+	assert.Equal(t, "admin", result.User)
+	assert.Empty(t, result.password)
+	assert.Equal(t, []string{"test"}, result.Tags)
+}
+
+func TestFillStructWithWrongType(t *testing.T) {
+	myData := make(map[string]interface{})
+	myData["user"] = 11
+
+	result := &MyStruct{}
+	err := FillStruct(myData, result)
+	assert.Equal(t, "11", result.User)
+
+	myData["timeout"] = "10"
+	err = FillStruct(myData, result)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "yaml: unmarshal errors:")
+}
+
+func TestFillStructWithComplexType(t *testing.T) {
+	myData := make(map[string]interface{})
+	myData["options"] = map[string]interface{}{
+		"replication":    true,
+		"galera_cluster": false,
+	}
+
+	result := &MyStruct{}
+	err := FillStruct(myData, result)
+	assert.NoError(t, err)
+	assert.True(t, result.Options.Replication)
+	assert.False(t, result.Options.GaleraCluster)
+}
+
+func TestStringInSlice(t *testing.T) {
+	for _, c := range []struct {
+		in1  string
+		in2  []string
+		want bool
+	}{
+		{"Hello", []string{"Hello", "World"}, true},
+		{"World", []string{"Hello", "World"}, true},
+		{"Hi", []string{"Hello", "World"}, false},
+	} {
+		out := StringInSlice(c.in1, c.in2)
+		if out != c.want {
+			t.Errorf("Contains(%s, %v) == %t, want %t", c.in1, c.in2, out, c.want)
 		}
 	}
 }

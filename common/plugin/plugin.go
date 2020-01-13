@@ -12,14 +12,13 @@ import (
 type Plugin interface {
 	// Check takes in an aggregator and adds the metrics that the Plugin
 	// gathers. This is called every "interval"
-	Check(agg metric.Aggregator, instance Instance) error
+	Check(agg metric.Aggregator) error
 }
 
 // RunningPlugin XXX
 type RunningPlugin struct {
-	Name   string
-	Plugin Plugin
-	Config *Config
+	Name    string
+	Plugins []Plugin
 }
 
 // InitConfig XXX
